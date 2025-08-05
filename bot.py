@@ -5,31 +5,32 @@ import logging
 import motor.motor_asyncio
 import requests
 from pyrogram import Client, filters
-from flask import Flask, request, jsonify
 
 # =======================
 # Environment variables
 # =======================
+# প্রয়োজনীয় সকল এনভায়রনমেন্ট ভেরিয়েবল সেট করুন
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))  # Telegram API ID (Telegram apps > my.telegram.org)
+API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))  # Telegram API ID (my.telegram.org থেকে)
 API_HASH = os.getenv("TELEGRAM_API_HASH")        # Telegram API HASH
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 MONGODB_URI = os.getenv("MONGODB_URI")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Ex: https://yourapp.onrender.com/webhook
 PAYMENT_LINK = os.getenv("PAYMENT_LINK") or "https://yourpaymentlink.example.com"
 
-if not all([BOT_TOKEN, API_ID, API_HASH, TMDB_API_KEY, MONGODB_URI, WEBHOOK_URL]):
-    raise Exception("Please set all required environment variables!")
+# সকল ভেরিয়েবল সেট করা হয়েছে কিনা তা পরীক্ষা করুন
+if not all([BOT_TOKEN, API_ID, API_HASH, TMDB_API_KEY, MONGODB_URI]):
+    raise Exception("Please set all required environment variables! (TELEGRAM_BOT_TOKEN, TELEGRAM_API_ID, TELEGRAM_API_HASH, TMDB_API_KEY, MONGODB_URI)")
 
 # =======================
 # Initialize Pyrogram client
 # =======================
-app = Flask(__name__)
+# বট ক্লায়েন্ট ইনিশিয়ালাইজ করা হচ্ছে
 bot = Client("movie_bot", bot_token=BOT_TOKEN, api_id=API_ID, api_hash=API_HASH)
 
 # =======================
 # Initialize MongoDB client (Async)
 # =======================
+# ডেটাবেস কানেকশন
 mongo_client = motor.motor_asyncio.AsyncIOMotorClient(MONGODB_URI)
 db = mongo_client["moviebot_db"]
 search_log_collection = db["search_logs"]
@@ -38,10 +39,12 @@ search_log_collection = db["search_logs"]
 # Movie renaming and parsing function
 # =======================
 def clean_title(raw):
+    """মুভির নাম পরিষ্কার করে এবং প্রতিটি শব্দ বড় হাতের করে।"""
     title = raw.replace(".", " ").strip()
     return " ".join(word.capitalize() for word in title.split())
 
 def parse_and_rename(filename):
+    """ফাইলের নাম থেকে মুভির নাম, বছর, কোয়ালিটি ইত্যাদি বের করে নতুন নাম তৈরি করে।"""
     name_part, dot, ext = filename.rpartition(".")
     ext = ext if ext else ""
 
@@ -55,33 +58,28 @@ def parse_and_rename(filename):
     source = source_match.group(0) if source_match else ""
 
     lang = ""
-    if re.search(r"\bBEN\b", name_part, re.IGNORECASE):
+    if re.search(r"\b(BEN|BENGALI)\b", name_part, re.IGNORECASE):
         lang = "Bengali"
-    elif re.search(r"\bHINDI\b", name_part, re.IGNORECASE):
+    elif re.search(r"\b(HIN|HINDI)\b", name_part, re.IGNORECASE):
         lang = "Hindi"
-    elif re.search(r"\bENG\b", name_part, re.IGNORECASE):
+    elif re.search(r"\b(ENG|ENGLISH)\b", name_part, re.IGNORECASE):
         lang = "English"
 
     dub = ""
-    if re.search(r"\bDUB\b", name_part, re.IGNORECASE):
+    if re.search(r"\b(DUB|DUBBED)\b", name_part, re.IGNORECASE):
         dub = "Dubbed"
 
-    extras = []
-    for token in re.findall(r"[A-Za-z0-9\-]{2,}", name_part):
-        upper = token.upper()
-        if upper in {quality.upper(), source.upper(), "BEN", "HINDI", "ENG", "DUB"}:
-            continue
-        if re.fullmatch(r"(19|20)\d{2}", token):
-            continue
-        extras.append(upper)
-
+    # Clean title by removing known tags
     title_raw = name_part
     if year:
-        title_raw = name_part.split(year)[0]
-    for piece in [quality, source, "BEN", "HINDI", "ENG", "DUB"]:
-        title_raw = re.sub(re.escape(piece), "", title_raw, flags=re.IGNORECASE)
-    for extra in extras:
-        title_raw = re.sub(re.escape(extra), "", title_raw, flags=re.IGNORECASE)
+        title_raw = title_raw.split(year)[0]
+    
+    # Remove all known tags to isolate the title
+    tags_to_remove = [quality, source, "BEN", "BENGALI", "HIN", "HINDI", "ENG", "ENGLISH", "DUB", "DUBBED"]
+    for tag in tags_to_remove:
+        if tag:
+            title_raw = re.sub(r'\b' + re.escape(tag) + r'\b', "", title_raw, flags=re.IGNORECASE)
+            
     title = clean_title(title_raw)
 
     parts = []
@@ -97,8 +95,6 @@ def parse_and_rename(filename):
         parts.append(lang)
     if dub:
         parts.append(dub)
-    if extras:
-        parts.extend(extras)
 
     new_name = " ".join(parts)
     if ext:
@@ -108,55 +104,58 @@ def parse_and_rename(filename):
 # =======================
 # Fetch movie details from TMDb API
 # =======================
-def fetch_movie_details(title, year=None):
+async def fetch_movie_details(title, year=None):
+    """TMDb API ব্যবহার করে মুভির বিবরণ নিয়ে আসে।"""
     try:
+        # এটি একটি non-async লাইব্রেরি, তাই asyncio.to_thread ব্যবহার করা ভালো
         search_url = f"https://api.themoviedb.org/3/search/movie"
         params = {
             "api_key": TMDB_API_KEY,
             "query": title,
+            "language": "en-US"
         }
         if year:
             params["year"] = year
-        res = requests.get(search_url, params=params, timeout=10)
+            
+        res = await asyncio.to_thread(requests.get, search_url, params=params, timeout=10)
         res.raise_for_status()
         data = res.json()
+
         if data.get("results"):
             movie = data["results"][0]
             movie_id = movie["id"]
             details_url = f"https://api.themoviedb.org/3/movie/{movie_id}"
-            details_params = {
-                "api_key": TMDB_API_KEY,
-                "language": "en-US",
-            }
-            details_res = requests.get(details_url, params=details_params, timeout=10)
+            details_params = {"api_key": TMDB_API_KEY, "language": "en-US"}
+            
+            details_res = await asyncio.to_thread(requests.get, details_url, params=details_params, timeout=10)
             details_res.raise_for_status()
-            details = details_res.json()
-            return details
+            return details_res.json()
+            
     except Exception as e:
-        print(f"TMDb fetch error: {e}")
+        logging.error(f"TMDb fetch error: {e}")
     return None
 
 # =======================
 # Build caption message
 # =======================
 def build_caption(movie_details, pretty_name):
+    """মুভির বিবরণ দিয়ে একটি সুন্দর ক্যাপশন তৈরি করে।"""
     if not movie_details:
-        return f"🎬 {pretty_name}\n\n❌ Details not found.\n\n💰 Payment: {PAYMENT_LINK}"
+        return f"🎬 **{pretty_name}**\n\n❌ Details not found.\n\n💰 Payment: {PAYMENT_LINK}", None
 
     title = movie_details.get("title", pretty_name)
-    year = movie_details.get("release_date", "")[:4]
+    year = (movie_details.get("release_date") or "")[:4]
     rating = movie_details.get("vote_average", "N/A")
     overview = movie_details.get("overview", "No description available.")
-    lang = movie_details.get("original_language", "").upper()
-    poster_path = movie_details.get("poster_path", "")
+    poster_path = movie_details.get("poster_path")
     poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None
 
     caption = f"""🎬 **{title} ({year})**
 
-⭐ Rating: {rating} / 10  
-📝 Overview: {overview}
+⭐ **Rating:** `{rating:.1f}/10`
+📝 **Overview:** {overview[:250] + '...' if len(overview) > 250 else overview}
 
-💰 Payment / Premium: [Click Here]({PAYMENT_LINK})
+💰 **Payment / Premium:** [Click Here]({PAYMENT_LINK})
 
 \n\n© Bot by YourName"""
 
@@ -166,60 +165,76 @@ def build_caption(movie_details, pretty_name):
 # MongoDB: log user search
 # =======================
 async def log_search(user_id, query):
-    await search_log_collection.insert_one({
-        "user_id": user_id,
-        "query": query,
-        "timestamp":  asyncio.get_event_loop().time()
-    })
+    """ব্যবহারকারীর সার্চ ডেটাবেসে লগ করে।"""
+    try:
+        await search_log_collection.insert_one({
+            "user_id": user_id,
+            "query": query,
+            "timestamp":  asyncio.get_event_loop().time()
+        })
+    except Exception as e:
+        logging.error(f"Failed to log search for user {user_id}: {e}")
 
 # =======================
 # Pyrogram message handler
 # =======================
-@bot.on_message(filters.text & ~filters.edited)
+@bot.on_message(filters.text & ~filters.private & ~filters.edited)
 async def handle_movie_request(client, message):
+    """ব্যবহারকারীর পাঠানো মেসেজ প্রসেস করে।"""
     query = message.text.strip()
-    pretty_name = parse_and_rename(query + ".mp4")  # add .mp4 to help parsing
-
-    # Log search
+    
+    # ইউজার সার্চ লগ করা হচ্ছে
     await log_search(message.from_user.id, query)
 
-    # Try extract title & year for TMDb fetch
-    title_only = re.sub(r"\.(19|20)\d{2}\b.*", "", query)  # before year
-    year_match = re.search(r"(19|20)\d{2}", query)
+    # ফাইলের নাম পার্স করে সুন্দর নাম তৈরি
+    pretty_name = parse_and_rename(query + ".mkv")  # .mkv যোগ করা হয়েছে পার্সিং এর সুবিধার জন্য
+
+    # TMDb থেকে ডেটা আনার জন্য শুধু মুভির নাম ও বছর আলাদা করা হচ্ছে
+    year_match = re.search(r"\b(19|20)\d{2}\b", query)
     year = year_match.group(0) if year_match else None
+    
+    title_only = re.sub(r'[\(\[\{]?(19|20)\d{2}[\)\]\}]?', '', query, flags=re.IGNORECASE) # বছর বাদ দেওয়া
+    title_only = re.sub(r'\b(360p|480p|720p|1080p|2160p|4k|HDRip|WEBRip|BluRay|DVDRip|WEB-DL|HDR|BRRip|BEN|HINDI|ENG|DUB)\b', '', title_only, flags=re.IGNORECASE)
+    title_only = clean_title(title_only)
 
-    # Fetch details
-    details = await asyncio.to_thread(fetch_movie_details, title_only, year)
+    # TMDb API থেকে মুভির বিবরণ আনা হচ্ছে
+    details = await fetch_movie_details(title_only, year)
 
+    # ক্যাপশন ও পোস্টার URL তৈরি করা হচ্ছে
     caption, poster_url = build_caption(details, pretty_name)
 
-    if poster_url:
-        await message.reply_photo(poster_url, caption=caption, parse_mode="markdown")
-    else:
-        await message.reply_text(caption, parse_mode="markdown")
-
-# =======================
-# Flask Webhook setup
-# =======================
-@app.route("/webhook", methods=["POST"])
-def webhook_handler():
-    update = request.get_json(force=True)
-    asyncio.run(bot.process_new_updates([update]))
-    return jsonify({"status": "ok"})
-
-# =======================
-# Set webhook on start
-# =======================
-async def set_webhook():
-    await bot.set_webhook(WEBHOOK_URL)
+    try:
+        if poster_url:
+            await message.reply_photo(
+                photo=poster_url,
+                caption=caption
+            )
+        else:
+            await message.reply_text(
+                text=caption,
+                disable_web_page_preview=True
+            )
+    except Exception as e:
+        logging.error(f"Failed to send message for query '{query}': {e}")
+        # যদি কোনো কারণে মেসেজ পাঠাতে সমস্যা হয়, তাহলে শুধু টেক্সট পাঠানো হবে
+        await message.reply_text(
+            text=caption,
+            disable_web_page_preview=True
+        )
 
 # =======================
 # Main entry point
 # =======================
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(bot.start())
-    loop.run_until_complete(set_webhook())
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")))
-    loop.run_until_complete(bot.idle())
+    # লগিং কনফিগার করা হচ্ছে
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    logging.info("Starting Bot...")
+    
+    # বটকে পোলিং মোডে চালানো হচ্ছে
+    # এটি নিজে থেকেই টেলিগ্রাম সার্ভার থেকে আপডেট আনবে
+    bot.run()
+    
+    logging.info("Bot Stopped.")
