@@ -3,31 +3,9 @@ import re
 import logging
 import asyncio
 import requests
-from flask import Flask, request
-from threading import Thread
 from pyrogram import Client, filters
 from pyrogram.enums import ParseMode
 import motor.motor_asyncio
-
-# =======================
-# Flask App for Webhook & Health Check
-# =======================
-app = Flask(__name__)
-
-@app.route("/")
-def index():
-    return "🤖 Bot is alive!"
-
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    if request.method == "POST":
-        update = request.get_json()
-        asyncio.run(bot.process_update(update))
-        return "OK", 200
-
-def run_flask():
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
 
 # =======================
 # Environment Variables
@@ -37,11 +15,10 @@ API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))
 API_HASH = os.getenv("TELEGRAM_API_HASH")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 MONGODB_URI = os.getenv("MONGODB_URI")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # eg. https://your-bot-name.onrender.com/webhook
 PAYMENT_LINK = os.getenv("PAYMENT_LINK", "https://yourpaymentlink.example.com")
 BOT_OWNER_NAME = os.getenv("BOT_OWNER_NAME", "MovieBot Owner")
 
-if not all([BOT_TOKEN, API_ID, API_HASH, TMDB_API_KEY, MONGODB_URI, WEBHOOK_URL]):
+if not all([BOT_TOKEN, API_ID, API_HASH, TMDB_API_KEY, MONGODB_URI]):
     raise SystemExit("❌ One or more environment variables are missing.")
 
 # =======================
@@ -162,14 +139,8 @@ async def group_handler(client, message):
         await message.reply_text(text=caption)
 
 # =======================
-# Startup
+# Start the Bot
 # =======================
-async def start_bot():
-    await bot.start()
-    await bot.set_webhook(WEBHOOK_URL)
-    logging.info("✅ Bot started with webhook.")
-
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    Thread(target=run_flask).start()
-    asyncio.run(start_bot())
+    bot.run()
