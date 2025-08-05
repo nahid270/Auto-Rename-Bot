@@ -6,6 +6,7 @@ import motor.motor_asyncio
 import requests
 from pyrogram import Client, filters
 
+# ... (আপনার বাকি কোড অপরিবর্তিত থাকবে) ...
 # =======================
 # Environment variables
 # =======================
@@ -16,7 +17,7 @@ API_HASH = os.getenv("TELEGRAM_API_HASH")        # Telegram API HASH
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 MONGODB_URI = os.getenv("MONGODB_URI")
 PAYMENT_LINK = os.getenv("PAYMENT_LINK") or "https://yourpaymentlink.example.com"
-BOT_OWNER_NAME = os.getenv("BOT_OWNER_NAME") or "YourName" # আপনার নাম বা চ্যানেলের নাম দিন
+BOT_OWNER_NAME = os.getenv("BOT_OWNER_NAME") or "Ctgmovies23" # আপনার নাম বা চ্যানেলের নাম দিন
 
 # সকল ভেরিয়েবল সেট করা হয়েছে কিনা তা পরীক্ষা করুন
 if not all([BOT_TOKEN, API_ID, API_HASH, TMDB_API_KEY, MONGODB_URI]):
@@ -36,6 +37,8 @@ mongo_client = motor.motor_asyncio.AsyncIOMotorClient(MONGODB_URI)
 db = mongo_client["moviebot_db"]
 search_log_collection = db["search_logs"]
 
+# ... (parse_and_rename, fetch_movie_details, build_caption, log_search, handle_movie_request ফাংশনগুলো এখানে থাকবে) ...
+# (আগের উত্তরে দেওয়া কোড থেকে কপি করুন, কারণ সেগুলো ঠিক আছে)
 # =======================
 # Movie renaming and parsing function
 # =======================
@@ -117,13 +120,10 @@ async def fetch_movie_details(title, year=None):
         if year:
             params["year"] = year
             
-        async with requests.Session() as session:
-             # Use a non-blocking request with an async-compatible library or run in a thread
-            def do_request():
-                return session.get(search_url, params=params, timeout=10)
+        def do_request():
+            return requests.get(search_url, params=params, timeout=10)
 
-            res = await asyncio.to_thread(do_request)
-
+        res = await asyncio.to_thread(do_request)
         res.raise_for_status()
         data = res.json()
 
@@ -133,10 +133,9 @@ async def fetch_movie_details(title, year=None):
             details_url = f"https://api.themoviedb.org/3/movie/{movie_id}"
             details_params = {"api_key": TMDB_API_KEY, "language": "en-US"}
             
-            async with requests.Session() as session:
-                def do_details_request():
-                    return session.get(details_url, params=details_params, timeout=10)
-                details_res = await asyncio.to_thread(do_details_request)
+            def do_details_request():
+                return requests.get(details_url, params=details_params, timeout=10)
+            details_res = await asyncio.to_thread(do_details_request)
 
             details_res.raise_for_status()
             return details_res.json()
@@ -199,43 +198,28 @@ async def handle_movie_request(client, message):
     """ব্যবহারকারীর পাঠানো মেসেজ প্রসেস করে।"""
     query = message.text.strip()
     
-    # ইউজার সার্চ লগ করা হচ্ছে
     await log_search(message.from_user.id, query)
 
-    # ফাইলের নাম পার্স করে সুন্দর নাম তৈরি
-    pretty_name = parse_and_rename(query + ".mkv")  # .mkv যোগ করা হয়েছে পার্সিং এর সুবিধার জন্য
+    pretty_name = parse_and_rename(query + ".mkv")
 
-    # TMDb থেকে ডেটা আনার জন্য শুধু মুভির নাম ও বছর আলাদা করা হচ্ছে
     year_match = re.search(r"\b(19|20)\d{2}\b", query)
     year = year_match.group(0) if year_match else None
     
-    title_only = re.sub(r'[\(\[\{]?(19|20)\d{2}[\)\]\}]?', '', query, flags=re.IGNORECASE) # বছর বাদ দেওয়া
+    title_only = re.sub(r'[\(\[\{]?(19|20)\d{2}[\)\]\}]?', '', query, flags=re.IGNORECASE)
     title_only = re.sub(r'\b(360p|480p|720p|1080p|2160p|4k|HDRip|WEBRip|BluRay|DVDRip|WEB-DL|HDR|BRRip|BEN|HINDI|ENG|DUB)\b', '', title_only, flags=re.IGNORECASE)
     title_only = clean_title(title_only)
 
-    # TMDb API থেকে মুভির বিবরণ আনা হচ্ছে
     details = await fetch_movie_details(title_only, year)
-
-    # ক্যাপশন ও পোস্টার URL তৈরি করা হচ্ছে
     caption, poster_url = build_caption(details, pretty_name)
 
     try:
         if poster_url:
-            await message.reply_photo(
-                photo=poster_url,
-                caption=caption
-            )
+            await message.reply_photo(photo=poster_url, caption=caption)
         else:
-            await message.reply_text(
-                text=caption,
-                disable_web_page_preview=True
-            )
+            await message.reply_text(text=caption, disable_web_page_preview=True)
     except Exception as e:
         logging.error(f"Failed to send message for query '{query}': {e}")
-        await message.reply_text(
-            text=caption,
-            disable_web_page_preview=True
-        )
+        await message.reply_text(text=caption, disable_web_page_preview=True)
 
 # =======================
 # Main entry point
@@ -244,9 +228,9 @@ async def main():
     """বট চালু করার মূল ফাংশন।"""
     await bot.start()
     logging.info("Bot has started successfully!")
-    await bot.idle()
-    await bot.stop()
-    logging.info("Bot has stopped.")
+    
+    # এই লাইনটি প্রোগ্রামটিকে অনির্দিষ্টকালের জন্য চলতে দেবে।
+    await asyncio.Future()
 
 if __name__ == "__main__":
     logging.basicConfig(
@@ -254,7 +238,6 @@ if __name__ == "__main__":
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
     
-    # asyncio ইভেন্ট লুপে main ফাংশনটি চালানো হচ্ছে
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
