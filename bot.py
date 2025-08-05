@@ -5,50 +5,56 @@ import logging
 import motor.motor_asyncio
 import requests
 from pyrogram import Client, filters
+from flask import Flask  # Flask ইম্পোর্ট করা হয়েছে
 
-# ... (আপনার বাকি কোড অপরিবর্তিত থাকবে) ...
+# =======================
+# Flask App ইনিশিয়ালাইজ করা হচ্ছে
+# =======================
+app = Flask(__name__)
+
+# Render Health Check এর জন্য একটি রুট
+@app.route('/')
+def index():
+    return "Bot is alive!"
+
+def run_flask_app():
+    # Render দ্বারা নির্ধারিত PORT এ Flask অ্যাপ চালানো হবে
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
+
 # =======================
 # Environment variables
 # =======================
-# প্রয়োজনীয় সকল এনভায়রনমেন্ট ভেরিয়েবল সেট করুন
+# (এই অংশটি অপরিবর্তিত)
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))  # Telegram API ID (my.telegram.org থেকে)
-API_HASH = os.getenv("TELEGRAM_API_HASH")        # Telegram API HASH
+API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))
+API_HASH = os.getenv("TELEGRAM_API_HASH")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 MONGODB_URI = os.getenv("MONGODB_URI")
 PAYMENT_LINK = os.getenv("PAYMENT_LINK") or "https://yourpaymentlink.example.com"
-BOT_OWNER_NAME = os.getenv("BOT_OWNER_NAME") or "Ctgmovies23" # আপনার নাম বা চ্যানেলের নাম দিন
+BOT_OWNER_NAME = os.getenv("BOT_OWNER_NAME") or "YourName"
 
-# সকল ভেরিয়েবল সেট করা হয়েছে কিনা তা পরীক্ষা করুন
 if not all([BOT_TOKEN, API_ID, API_HASH, TMDB_API_KEY, MONGODB_URI]):
-    raise Exception("Please set all required environment variables! (TELEGRAM_BOT_TOKEN, TELEGRAM_API_ID, TELEGRAM_API_HASH, TMDB_API_KEY, MONGODB_URI)")
+    raise Exception("Please set all required environment variables!")
 
 # =======================
-# Initialize Pyrogram client
+# Pyrogram & MongoDB Client
 # =======================
-# বট ক্লায়েন্ট ইনিশিয়ালাইজ করা হচ্ছে
+# (এই অংশটি অপরিবর্তিত)
 bot = Client("movie_bot", bot_token=BOT_TOKEN, api_id=API_ID, api_hash=API_HASH)
-
-# =======================
-# Initialize MongoDB client (Async)
-# =======================
-# ডেটাবেস কানেকশন
 mongo_client = motor.motor_asyncio.AsyncIOMotorClient(MONGODB_URI)
 db = mongo_client["moviebot_db"]
 search_log_collection = db["search_logs"]
 
-# ... (parse_and_rename, fetch_movie_details, build_caption, log_search, handle_movie_request ফাংশনগুলো এখানে থাকবে) ...
-# (আগের উত্তরে দেওয়া কোড থেকে কপি করুন, কারণ সেগুলো ঠিক আছে)
 # =======================
-# Movie renaming and parsing function
+# Helper Functions (parse, fetch, build, log)
 # =======================
+# (আপনার সব helper ফাংশন এখানে অপরিবর্তিত থাকবে)
 def clean_title(raw):
-    """মুভির নাম পরিষ্কার করে এবং প্রতিটি শব্দ বড় হাতের করে।"""
     title = raw.replace(".", " ").strip()
     return " ".join(word.capitalize() for word in title.split())
 
 def parse_and_rename(filename):
-    """ফাইলের নাম থেকে মুভির নাম, বছর, কোয়ালিটি ইত্যাদি বের করে নতুন নাম তৈরি করে।"""
     name_part, dot, ext = filename.rpartition(".")
     ext = ext if ext else ""
 
@@ -73,12 +79,10 @@ def parse_and_rename(filename):
     if re.search(r"\b(DUB|DUBBED)\b", name_part, re.IGNORECASE):
         dub = "Dubbed"
 
-    # Clean title by removing known tags
     title_raw = name_part
     if year:
         title_raw = title_raw.split(year)[0]
     
-    # Remove all known tags to isolate the title
     tags_to_remove = [quality, source, "BEN", "BENGALI", "HIN", "HINDI", "ENG", "ENGLISH", "DUB", "DUBBED"]
     for tag in tags_to_remove:
         if tag:
@@ -86,37 +90,16 @@ def parse_and_rename(filename):
             
     title = clean_title(title_raw)
 
-    parts = []
-    if title:
-        parts.append(title)
-    if year:
-        parts.append(f"({year})")
-    if quality:
-        parts.append(quality)
-    if source:
-        parts.append(source)
-    if lang:
-        parts.append(lang)
-    if dub:
-        parts.append(dub)
-
+    parts = [part for part in [title, f"({year})" if year else "", quality, source, lang, dub] if part]
     new_name = " ".join(parts)
     if ext:
         new_name = f"{new_name}.{ext}"
     return new_name
 
-# =======================
-# Fetch movie details from TMDb API
-# =======================
 async def fetch_movie_details(title, year=None):
-    """TMDb API ব্যবহার করে মুভির বিবরণ নিয়ে আসে।"""
     try:
         search_url = f"https://api.themoviedb.org/3/search/movie"
-        params = {
-            "api_key": TMDB_API_KEY,
-            "query": title,
-            "language": "en-US"
-        }
+        params = {"api_key": TMDB_API_KEY, "query": title, "language": "en-US"}
         if year:
             params["year"] = year
             
@@ -139,16 +122,11 @@ async def fetch_movie_details(title, year=None):
 
             details_res.raise_for_status()
             return details_res.json()
-            
     except Exception as e:
         logging.error(f"TMDb fetch error: {e}")
     return None
 
-# =======================
-# Build caption message
-# =======================
 def build_caption(movie_details, pretty_name):
-    """মুভির বিবরণ দিয়ে একটি সুন্দর ক্যাপশন তৈরি করে।"""
     if not movie_details:
         return f"🎬 **{pretty_name}**\n\n❌ Details not found.\n\n💰 Payment: {PAYMENT_LINK}", None
 
@@ -159,7 +137,6 @@ def build_caption(movie_details, pretty_name):
     poster_path = movie_details.get("poster_path")
     poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None
 
-    # Format rating to one decimal place if it's a number
     try:
         rating_text = f"{float(rating):.1f}/10"
     except (ValueError, TypeError):
@@ -173,14 +150,9 @@ def build_caption(movie_details, pretty_name):
 💰 **Payment / Premium:** [Click Here]({PAYMENT_LINK})
 
 \n\n© Bot by {BOT_OWNER_NAME}"""
-
     return caption, poster_url
 
-# =======================
-# MongoDB: log user search
-# =======================
 async def log_search(user_id, query):
-    """ব্যবহারকারীর সার্চ ডেটাবেসে লগ করে।"""
     try:
         await search_log_collection.insert_one({
             "user_id": user_id,
@@ -191,27 +163,21 @@ async def log_search(user_id, query):
         logging.error(f"Failed to log search for user {user_id}: {e}")
 
 # =======================
-# Pyrogram message handler
+# Pyrogram Message Handler
 # =======================
+# (এই অংশটি অপরিবর্তিত)
 @bot.on_message(filters.text & filters.group)
 async def handle_movie_request(client, message):
-    """ব্যবহারকারীর পাঠানো মেসেজ প্রসেস করে।"""
     query = message.text.strip()
-    
     await log_search(message.from_user.id, query)
-
     pretty_name = parse_and_rename(query + ".mkv")
-
     year_match = re.search(r"\b(19|20)\d{2}\b", query)
     year = year_match.group(0) if year_match else None
-    
     title_only = re.sub(r'[\(\[\{]?(19|20)\d{2}[\)\]\}]?', '', query, flags=re.IGNORECASE)
     title_only = re.sub(r'\b(360p|480p|720p|1080p|2160p|4k|HDRip|WEBRip|BluRay|DVDRip|WEB-DL|HDR|BRRip|BEN|HINDI|ENG|DUB)\b', '', title_only, flags=re.IGNORECASE)
     title_only = clean_title(title_only)
-
     details = await fetch_movie_details(title_only, year)
     caption, poster_url = build_caption(details, pretty_name)
-
     try:
         if poster_url:
             await message.reply_photo(photo=poster_url, caption=caption)
@@ -222,14 +188,21 @@ async def handle_movie_request(client, message):
         await message.reply_text(text=caption, disable_web_page_preview=True)
 
 # =======================
-# Main entry point
+# Main entry point (Web Service এর জন্য পরিবর্তিত)
 # =======================
 async def main():
-    """বট চালু করার মূল ফাংশন।"""
-    await bot.start()
-    logging.info("Bot has started successfully!")
+    # Pyrogram বট এবং Flask অ্যাপ একসাথে চালানো হবে
+    # Flask অ্যাপটি একটি আলাদা থ্রেডে চলবে যাতে এটি Pyrogram কে ব্লক না করে
+    from threading import Thread
     
-    # এই লাইনটি প্রোগ্রামটিকে অনির্দিষ্টকালের জন্য চলতে দেবে।
+    flask_thread = Thread(target=run_flask_app)
+    flask_thread.daemon = True
+    flask_thread.start()
+
+    await bot.start()
+    logging.info("Pyrogram client started successfully!")
+    
+    # প্রোগ্রামটিকে অনির্দিষ্টকালের জন্য চলতে দেওয়া হবে
     await asyncio.Future()
 
 if __name__ == "__main__":
@@ -239,6 +212,7 @@ if __name__ == "__main__":
     )
     
     try:
+        logging.info("Starting bot...")
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logging.info("Bot shutdown requested.")
