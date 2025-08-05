@@ -7,7 +7,7 @@ import requests
 from threading import Thread
 from flask import Flask
 from pyrogram import Client, filters
-from pyrogram.enums import ParseMode, Intents  # <-- সঠিক ইম্পোর্ট এখানে
+from pyrogram.enums import ParseMode
 
 # =======================
 # Flask App for Render Health Check
@@ -33,7 +33,6 @@ MONGODB_URI = os.getenv("MONGODB_URI")
 PAYMENT_LINK = os.getenv("PAYMENT_LINK") or "https://yourpaymentlink.example.com"
 BOT_OWNER_NAME = os.getenv("BOT_OWNER_NAME") or "YourName"
 
-# Check if all essential variables are set
 if not all([BOT_TOKEN, API_ID, API_HASH, TMDB_API_KEY, MONGODB_URI]):
     logging.critical("CRITICAL: One or more environment variables are missing!")
     raise SystemExit("Missing required environment variables. Bot cannot start.")
@@ -41,14 +40,14 @@ if not all([BOT_TOKEN, API_ID, API_HASH, TMDB_API_KEY, MONGODB_URI]):
 # =======================
 # Initialize Clients
 # =======================
-# Pyrogram Client with Intents
+# Pyrogram Client (Intents ছাড়া)
+# এটি সবচেয়ে সামঞ্জস্যপূর্ণ (compatible) উপায়
 bot = Client(
     "movie_bot",
     bot_token=BOT_TOKEN,
     api_id=API_ID,
     api_hash=API_HASH,
-    parse_mode=ParseMode.MARKDOWN,
-    intents=Intents.MESSAGES # শুধু মেসেজ ইন্টেন্টই যথেষ্ট
+    parse_mode=ParseMode.MARKDOWN
 )
 
 # MongoDB Async Client
@@ -62,7 +61,7 @@ except Exception as e:
     raise SystemExit("Database connection failed. Bot cannot start.")
 
 # =======================
-# Helper Functions (অপরিবর্তিত)
+# Helper Functions
 # =======================
 def clean_title(raw_text):
     title = raw_text.replace(".", " ").strip()
@@ -162,7 +161,6 @@ async def log_search(user_id, query):
 async def handle_movie_request(client, message):
     query = message.text.strip()
     logging.info(f"Received query '{query}' from user {message.from_user.id} in group {message.chat.id}")
-
     await log_search(message.from_user.id, query)
 
     pretty_name = parse_and_rename(query + ".mkv")
@@ -197,10 +195,7 @@ async def main():
     await asyncio.Future()
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
     
     try:
         asyncio.run(main())
