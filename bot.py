@@ -7,8 +7,7 @@ import requests
 from threading import Thread
 from flask import Flask
 from pyrogram import Client, filters
-from pyrogram.enums import ParseMode
-from pyrogram.client.intents import Intents
+from pyrogram.enums import ParseMode, Intents  # <-- সঠিক ইম্পোর্ট এখানে
 
 # =======================
 # Flask App for Render Health Check
@@ -49,7 +48,7 @@ bot = Client(
     api_id=API_ID,
     api_hash=API_HASH,
     parse_mode=ParseMode.MARKDOWN,
-    intents=Intents.MESSAGES | Intents.GUILD_MESSAGES # Ensures the bot receives messages
+    intents=Intents.MESSAGES # শুধু মেসেজ ইন্টেন্টই যথেষ্ট
 )
 
 # MongoDB Async Client
@@ -63,15 +62,13 @@ except Exception as e:
     raise SystemExit("Database connection failed. Bot cannot start.")
 
 # =======================
-# Helper Functions
+# Helper Functions (অপরিবর্তিত)
 # =======================
 def clean_title(raw_text):
-    """Cleans and capitalizes the title."""
     title = raw_text.replace(".", " ").strip()
     return " ".join(word.capitalize() for word in title.split())
 
 def parse_and_rename(filename):
-    """Parses movie details from a filename to create a clean name."""
     name_part, _, ext = filename.rpartition(".")
     
     year_match = re.search(r"\b(19|20)\d{2}\b", name_part)
@@ -88,13 +85,11 @@ def parse_and_rename(filename):
 
     title = clean_title(title_raw)
     
-    # Re-assemble the name
     parts = [part for part in [title, f"({year})" if year else "", quality] if part]
     new_name = " ".join(parts)
     return new_name if new_name else clean_title(name_part)
 
 async def fetch_movie_details(title, year=None):
-    """Fetches movie details from TMDb API."""
     search_url = "https://api.themoviedb.org/3/search/movie"
     params = {"api_key": TMDB_API_KEY, "query": title, "language": "en-US"}
     if year:
@@ -125,7 +120,6 @@ async def fetch_movie_details(title, year=None):
     return None
 
 def build_caption(details, pretty_name):
-    """Builds the caption for the movie."""
     if not details:
         caption = f"🎬 **{pretty_name}**\n\n❌ Details not found.\n\n💰 **Payment / Premium:** [Click Here]({PAYMENT_LINK})"
         return caption, None
@@ -152,7 +146,6 @@ def build_caption(details, pretty_name):
     return caption, poster_url
 
 async def log_search(user_id, query):
-    """Logs user search queries to MongoDB."""
     try:
         await search_log_collection.insert_one({
             "user_id": user_id,
@@ -167,13 +160,11 @@ async def log_search(user_id, query):
 # =======================
 @bot.on_message(filters.text & filters.group & ~filters.bot)
 async def handle_movie_request(client, message):
-    """Handles incoming text messages in groups."""
     query = message.text.strip()
     logging.info(f"Received query '{query}' from user {message.from_user.id} in group {message.chat.id}")
 
     await log_search(message.from_user.id, query)
 
-    # Simplified parsing logic
     pretty_name = parse_and_rename(query + ".mkv")
     year_match = re.search(r"\b(19|20)\d{2}\b", query)
     year = year_match.group(0) if year_match else None
@@ -190,24 +181,19 @@ async def handle_movie_request(client, message):
         logging.info(f"Successfully replied to query '{query}'")
     except Exception as e:
         logging.error(f"Failed to send reply for query '{query}'. Error: {e}")
-        # Fallback to a simple text message if photo fails
         await message.reply_text(text=caption, disable_web_page_preview=True)
 
 # =======================
 # Main Execution Block
 # =======================
 async def main():
-    """Starts the Flask app and the Pyrogram client."""
-    # Run Flask in a separate thread
     flask_thread = Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
 
-    # Start the Pyrogram client
     await bot.start()
     logging.info("Pyrogram client started. Bot is now online.")
     
-    # Keep the main process alive
     await asyncio.Future()
 
 if __name__ == "__main__":
