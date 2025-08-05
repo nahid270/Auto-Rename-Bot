@@ -16,6 +16,7 @@ API_HASH = os.getenv("TELEGRAM_API_HASH")        # Telegram API HASH
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 MONGODB_URI = os.getenv("MONGODB_URI")
 PAYMENT_LINK = os.getenv("PAYMENT_LINK") or "https://yourpaymentlink.example.com"
+BOT_OWNER_NAME = os.getenv("BOT_OWNER_NAME") or "YourName" # আপনার নাম বা চ্যানেলের নাম দিন
 
 # সকল ভেরিয়েবল সেট করা হয়েছে কিনা তা পরীক্ষা করুন
 if not all([BOT_TOKEN, API_ID, API_HASH, TMDB_API_KEY, MONGODB_URI]):
@@ -107,7 +108,6 @@ def parse_and_rename(filename):
 async def fetch_movie_details(title, year=None):
     """TMDb API ব্যবহার করে মুভির বিবরণ নিয়ে আসে।"""
     try:
-        # এটি একটি non-async লাইব্রেরি, তাই asyncio.to_thread ব্যবহার করা ভালো
         search_url = f"https://api.themoviedb.org/3/search/movie"
         params = {
             "api_key": TMDB_API_KEY,
@@ -117,7 +117,13 @@ async def fetch_movie_details(title, year=None):
         if year:
             params["year"] = year
             
-        res = await asyncio.to_thread(requests.get, search_url, params=params, timeout=10)
+        async with requests.Session() as session:
+             # Use a non-blocking request with an async-compatible library or run in a thread
+            def do_request():
+                return session.get(search_url, params=params, timeout=10)
+
+            res = await asyncio.to_thread(do_request)
+
         res.raise_for_status()
         data = res.json()
 
@@ -127,7 +133,11 @@ async def fetch_movie_details(title, year=None):
             details_url = f"https://api.themoviedb.org/3/movie/{movie_id}"
             details_params = {"api_key": TMDB_API_KEY, "language": "en-US"}
             
-            details_res = await asyncio.to_thread(requests.get, details_url, params=details_params, timeout=10)
+            async with requests.Session() as session:
+                def do_details_request():
+                    return session.get(details_url, params=details_params, timeout=10)
+                details_res = await asyncio.to_thread(do_details_request)
+
             details_res.raise_for_status()
             return details_res.json()
             
@@ -150,14 +160,20 @@ def build_caption(movie_details, pretty_name):
     poster_path = movie_details.get("poster_path")
     poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None
 
+    # Format rating to one decimal place if it's a number
+    try:
+        rating_text = f"{float(rating):.1f}/10"
+    except (ValueError, TypeError):
+        rating_text = "N/A"
+
     caption = f"""🎬 **{title} ({year})**
 
-⭐ **Rating:** `{rating:.1f}/10`
+⭐ **Rating:** `{rating_text}`
 📝 **Overview:** {overview[:250] + '...' if len(overview) > 250 else overview}
 
 💰 **Payment / Premium:** [Click Here]({PAYMENT_LINK})
 
-\n\n© Bot by YourName"""
+\n\n© Bot by {BOT_OWNER_NAME}"""
 
     return caption, poster_url
 
@@ -178,7 +194,7 @@ async def log_search(user_id, query):
 # =======================
 # Pyrogram message handler
 # =======================
-@bot.on_message(filters.text & ~filters.private & ~filters.edited)
+@bot.on_message(filters.text & filters.group)
 async def handle_movie_request(client, message):
     """ব্যবহারকারীর পাঠানো মেসেজ প্রসেস করে।"""
     query = message.text.strip()
@@ -216,7 +232,6 @@ async def handle_movie_request(client, message):
             )
     except Exception as e:
         logging.error(f"Failed to send message for query '{query}': {e}")
-        # যদি কোনো কারণে মেসেজ পাঠাতে সমস্যা হয়, তাহলে শুধু টেক্সট পাঠানো হবে
         await message.reply_text(
             text=caption,
             disable_web_page_preview=True
@@ -225,16 +240,22 @@ async def handle_movie_request(client, message):
 # =======================
 # Main entry point
 # =======================
+async def main():
+    """বট চালু করার মূল ফাংশন।"""
+    await bot.start()
+    logging.info("Bot has started successfully!")
+    await bot.idle()
+    await bot.stop()
+    logging.info("Bot has stopped.")
+
 if __name__ == "__main__":
-    # লগিং কনফিগার করা হচ্ছে
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
-    logging.info("Starting Bot...")
     
-    # বটকে পোলিং মোডে চালানো হচ্ছে
-    # এটি নিজে থেকেই টেলিগ্রাম সার্ভার থেকে আপডেট আনবে
-    bot.run()
-    
-    logging.info("Bot Stopped.")
+    # asyncio ইভেন্ট লুপে main ফাংশনটি চালানো হচ্ছে
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Bot shutdown requested.")
